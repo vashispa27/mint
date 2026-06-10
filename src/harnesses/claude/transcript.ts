@@ -22,12 +22,16 @@ export function expandPath(p: string): string {
 }
 
 export async function lineCount(transcriptPath: string): Promise<number> {
-  const text = await Bun.file(expandPath(transcriptPath)).text();
+  const file = Bun.file(expandPath(transcriptPath));
+  if (!(await file.exists())) return 0;
+  const text = await file.text();
   return text.split("\n").filter(l => l.trim() !== "").length;
 }
 
 export async function readLinesFrom(transcriptPath: string, offset: number): Promise<string[]> {
-  const text = await Bun.file(expandPath(transcriptPath)).text();
+  const file = Bun.file(expandPath(transcriptPath));
+  if (!(await file.exists())) return [];
+  const text = await file.text();
   const lines = text.split("\n").filter(l => l.trim() !== "");
   return lines.slice(offset);
 }

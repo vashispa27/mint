@@ -58,12 +58,9 @@ export async function cmdStart(args: string[]): Promise<void> {
   daemon.stop();
 
   // 6. Print summary
-  const totalK = Math.round(
-    (state.totalInputTokens + state.totalOutputTokens + state.totalCacheTokens) / 1000
-  );
-  console.log(`\n  Session ended.`);
-  console.log(`  ✓ ${state.currentTurn} turns · ${state.totalToolCalls} tool calls · ${totalK}k tokens`);
-  console.log(`  Session ID: ${sessionId}`);
+  console.log(`\n  Mint Session ended.`);
+  console.log(`  ✓ ${state.currentTurn} turns`);
+  console.log(`  Mint Session ID: ${sessionId}`);
 }
 
 function randomId(): string {

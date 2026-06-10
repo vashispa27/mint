@@ -1,8 +1,7 @@
 export type SessionEvent =
   | SessionStartEvent
   | TurnStartEvent
-  | ToolCallEvent
-  | TurnEndEvent
+  | RawEvent
   | SessionEndEvent;
 
 export interface SessionStartEvent {
@@ -22,28 +21,12 @@ export interface TurnStartEvent {
   ts: string;
 }
 
-export interface ToolCallEvent {
-  event: "tool_call";
+// Raw transcript objects for a completed turn — parsed at read time by mint show/log
+export interface RawEvent {
+  event: "raw";
   session_id: string;
   turn: number;
-  name: string;
-  input: Record<string, unknown>;
-  output: string;
-  ts: string;
-}
-
-export interface TurnEndEvent {
-  event: "turn_end";
-  session_id: string;
-  turn: number;
-  response: string;
-  thinking: string;
-  tokens: {
-    input: number;
-    output: number;
-    cache_read: number;
-    cache_write: number;
-  };
+  lines: unknown[];
   ts: string;
 }
 
@@ -51,6 +34,5 @@ export interface SessionEndEvent {
   event: "session_end";
   session_id: string;
   total_turns: number;
-  total_tokens: number;
   ts: string;
 }

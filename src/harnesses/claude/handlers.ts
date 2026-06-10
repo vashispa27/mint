@@ -1,5 +1,5 @@
 import { appendEvent } from "../../session/writer";
-import { lineCount, readLinesFrom, parseTurnLines } from "./transcript";
+import { lineCount, readLinesFrom } from "./transcript";
 import type { DaemonState } from "../../daemon/state";
 
 type HookPayload = Record<string, unknown>;
@@ -8,18 +8,10 @@ export async function handleHook(body: HookPayload, state: DaemonState): Promise
   const event = body["hook_event_name"] as string | undefined;
 
   switch (event) {
-    case "SessionStart":
-      await onSessionStart(body, state);
-      break;
-    case "UserPromptSubmit":
-      await onUserPromptSubmit(body, state);
-      break;
-    case "Stop":
-      await onStop(body, state);
-      break;
-    case "SessionEnd":
-      await onSessionEnd(body, state);
-      break;
+    case "SessionStart":      await onSessionStart(body, state);      break;
+    case "UserPromptSubmit":  await onUserPromptSubmit(body, state);  break;
+    case "Stop":              break; // no-op — transcript isn't fully flushed yet
+    case "SessionEnd":        await onSessionEnd(body, state);        break;
   }
 }
 
@@ -40,6 +32,11 @@ async function onUserPromptSubmit(payload: HookPayload, state: DaemonState): Pro
   const transcriptPath = (payload["transcript_path"] as string) ?? state.transcriptPath;
   if (!transcriptPath) return;
 
+  // Flush the previous turn's raw lines now that Claude has finished writing them
+  if (state.currentTurn > 0) {
+    await flushRawLines(transcriptPath, state);
+  }
+
   state.transcriptPath = transcriptPath;
   state.currentTurn++;
   state.turnStartOffset = await lineCount(transcriptPath);
@@ -53,55 +50,39 @@ async function onUserPromptSubmit(payload: HookPayload, state: DaemonState): Pro
   });
 }
 
-async function onStop(payload: HookPayload, state: DaemonState): Promise<void> {
-  const transcriptPath = (payload["transcript_path"] as string) ?? state.transcriptPath;
-  if (!transcriptPath || state.currentTurn === 0) return;
-
-  const newLines = await readLinesFrom(transcriptPath, state.turnStartOffset);
-  if (newLines.length === 0) return;
-
-  const parsed = parseTurnLines(newLines);
-  const ts = new Date().toISOString();
-
-  for (const tool of parsed.toolCalls) {
-    appendEvent(state.sessionFile, {
-      event: "tool_call",
-      session_id: state.sessionId,
-      turn: state.currentTurn,
-      name: tool.name,
-      input: tool.input,
-      output: tool.output,
-      ts,
-    });
-  }
-
-  appendEvent(state.sessionFile, {
-    event: "turn_end",
-    session_id: state.sessionId,
-    turn: state.currentTurn,
-    response: parsed.response,
-    thinking: parsed.thinking,
-    tokens: parsed.tokens,
-    ts,
-  });
-
-  state.totalInputTokens += parsed.tokens.input;
-  state.totalOutputTokens += parsed.tokens.output;
-  state.totalCacheTokens += parsed.tokens.cache_read + parsed.tokens.cache_write;
-  state.totalToolCalls += parsed.toolCalls.length;
-
-  state.turnStartOffset = await lineCount(transcriptPath);
-}
-
 async function onSessionEnd(payload: HookPayload, state: DaemonState): Promise<void> {
-  const totalTokens =
-    state.totalInputTokens + state.totalOutputTokens + state.totalCacheTokens;
+  const transcriptPath = (payload["transcript_path"] as string) ?? state.transcriptPath;
+
+  // Flush the last turn's raw lines
+  if (transcriptPath && state.currentTurn > 0) {
+    await flushRawLines(transcriptPath, state);
+  }
 
   appendEvent(state.sessionFile, {
     event: "session_end",
     session_id: state.sessionId,
     total_turns: state.currentTurn,
-    total_tokens: totalTokens,
     ts: new Date().toISOString(),
   });
+}
+
+async function flushRawLines(transcriptPath: string, state: DaemonState): Promise<void> {
+  const rawStrings = await readLinesFrom(transcriptPath, state.turnStartOffset);
+  if (rawStrings.length === 0) return;
+
+  // Parse each line into an object so we don't double-encode when we JSON.stringify the event
+  const lines = rawStrings.map(l => {
+    try { return JSON.parse(l) as unknown; }
+    catch { return l; }
+  });
+
+  appendEvent(state.sessionFile, {
+    event: "raw",
+    session_id: state.sessionId,
+    turn: state.currentTurn,
+    lines,
+    ts: new Date().toISOString(),
+  });
+
+  state.turnStartOffset = await lineCount(transcriptPath);
 }

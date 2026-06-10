@@ -6,10 +6,6 @@ export interface DaemonState {
   transcriptPath: string | null;
   turnStartOffset: number;
   currentTurn: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCacheTokens: number;
-  totalToolCalls: number;
 }
 
 export function createState(opts: {
@@ -23,9 +19,5 @@ export function createState(opts: {
     transcriptPath: null,
     turnStartOffset: 0,
     currentTurn: 0,
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalCacheTokens: 0,
-    totalToolCalls: 0,
   };
 }
