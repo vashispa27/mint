@@ -1,5 +1,6 @@
 import { appendEvent } from "../../session/writer";
 import { lineCount, readLinesFrom } from "./transcript";
+import { watchTranscript } from "./watcher";
 import type { DaemonState } from "../../daemon/state";
 
 type HookPayload = Record<string, unknown>;
@@ -8,15 +9,15 @@ export async function handleHook(body: HookPayload, state: DaemonState): Promise
   const event = body["hook_event_name"] as string | undefined;
 
   switch (event) {
-    case "SessionStart":      await onSessionStart(body, state);      break;
-    case "UserPromptSubmit":  await onUserPromptSubmit(body, state);  break;
-    case "Stop":              break; // no-op — transcript isn't fully flushed yet
-    case "SessionEnd":        await onSessionEnd(body, state);        break;
+    case "SessionStart":     await onSessionStart(body, state);     break;
+    case "UserPromptSubmit": await onUserPromptSubmit(body, state); break;
+    case "SessionEnd":       await onSessionEnd(body, state);       break;
   }
 }
 
 async function onSessionStart(payload: HookPayload, state: DaemonState): Promise<void> {
-  state.transcriptPath = payload["transcript_path"] as string;
+  const transcriptPath = payload["transcript_path"] as string;
+  state.transcriptPath = transcriptPath;
 
   appendEvent(state.sessionFile, {
     event: "session_start",
@@ -26,13 +27,35 @@ async function onSessionStart(payload: HookPayload, state: DaemonState): Promise
     model: (payload["model"] as string) ?? "unknown",
     ts: new Date().toISOString(),
   });
+
+  // Stream mode: start watcher writing raw lines to the stream file in real-time
+  if (state.streamFile) {
+    const streamFile = state.streamFile;
+    appendEvent(streamFile, {
+      event: "session_start",
+      session_id: state.sessionId,
+      harness: state.harness,
+      project: state.projectRoot,
+      model: (payload["model"] as string) ?? "unknown",
+      ts: new Date().toISOString(),
+    });
+
+    state.watcher = watchTranscript(transcriptPath, (lines) => {
+      appendEvent(streamFile, {
+        event: "raw",
+        session_id: state.sessionId,
+        lines,
+        ts: new Date().toISOString(),
+      });
+    });
+  }
 }
 
 async function onUserPromptSubmit(payload: HookPayload, state: DaemonState): Promise<void> {
   const transcriptPath = (payload["transcript_path"] as string) ?? state.transcriptPath;
   if (!transcriptPath) return;
 
-  // Flush the previous turn's raw lines now that Claude has finished writing them
+  // Flush the previous turn's transcript lines now that Claude has finished writing them
   if (state.currentTurn > 0) {
     await flushRawLines(transcriptPath, state);
   }
@@ -50,10 +73,10 @@ async function onUserPromptSubmit(payload: HookPayload, state: DaemonState): Pro
   });
 }
 
-async function onSessionEnd(payload: HookPayload, state: DaemonState): Promise<void> {
-  const transcriptPath = (payload["transcript_path"] as string) ?? state.transcriptPath;
+async function onSessionEnd(_payload: HookPayload, state: DaemonState): Promise<void> {
+  const transcriptPath = state.transcriptPath;
 
-  // Flush the last turn's raw lines
+  // Flush the last turn to the structured file
   if (transcriptPath && state.currentTurn > 0) {
     await flushRawLines(transcriptPath, state);
   }
@@ -61,16 +84,26 @@ async function onSessionEnd(payload: HookPayload, state: DaemonState): Promise<v
   appendEvent(state.sessionFile, {
     event: "session_end",
     session_id: state.sessionId,
-    total_turns: state.currentTurn,
     ts: new Date().toISOString(),
   });
+
+  // Drain and close the stream watcher
+  if (state.streamFile) {
+    await state.watcher?.drain();
+    state.watcher?.stop();
+
+    appendEvent(state.streamFile, {
+      event: "session_end",
+      session_id: state.sessionId,
+      ts: new Date().toISOString(),
+    });
+  }
 }
 
 async function flushRawLines(transcriptPath: string, state: DaemonState): Promise<void> {
   const rawStrings = await readLinesFrom(transcriptPath, state.turnStartOffset);
   if (rawStrings.length === 0) return;
 
-  // Parse each line into an object so we don't double-encode when we JSON.stringify the event
   const lines = rawStrings.map(l => {
     try { return JSON.parse(l) as unknown; }
     catch { return l; }

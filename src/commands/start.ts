@@ -6,11 +6,13 @@ import { createState } from "../daemon/state";
 import { HARNESSES } from "../harnesses/index";
 
 export async function cmdStart(args: string[]): Promise<void> {
-  const harness = HARNESSES[args[0] ?? ""];
+  const stream = args.includes("--stream");
+  const harnessName = args.find(a => !a.startsWith("--")) ?? "";
+  const harness = HARNESSES[harnessName];
 
   if (!harness) {
     const supported = Object.keys(HARNESSES).join(", ");
-    console.error(`Usage: mint start <harness>`);
+    console.error(`Usage: mint start <harness> [--stream]`);
     console.error(`Supported: ${supported}`);
     process.exit(1);
   }
@@ -42,8 +44,10 @@ export async function cmdStart(args: string[]): Promise<void> {
   await harness.installHooks(projectRoot, socketPath);
 
   // 4. Build state and start daemon with harness-specific hook handler
-  const sessionFile = join(projectRoot, ".mint", "sessions", `${sessionId}.jsonl`);
-  const state = createState({ sessionId, sessionFile, projectRoot, harness: harness.name });
+  const sessionsDir = join(projectRoot, ".mint", "sessions");
+  const sessionFile = join(sessionsDir, `${sessionId}.jsonl`);
+  const streamFile = stream ? join(sessionsDir, `${sessionId}.stream.jsonl`) : null;
+  const state = createState({ sessionId, sessionFile, streamFile, projectRoot, harness: harness.name });
   const daemon = startDaemon(socketPath, state, harness.handleHook);
 
   // 5. Spawn the harness
@@ -59,8 +63,8 @@ export async function cmdStart(args: string[]): Promise<void> {
 
   // 6. Print summary
   console.log(`\n  Mint Session ended.`);
-  console.log(`  ✓ ${state.currentTurn} turns`);
-  console.log(`  Mint Session ID: ${sessionId}`);
+  console.log(`  Session ID: ${sessionId}`);
+  if (stream) console.log(`  Stream file: ${sessionId}.stream.jsonl`);
 }
 
 function randomId(): string {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 
-const HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"] as const;
+const HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "SessionEnd"] as const;
 
 export async function installHooks(projectRoot: string, socketPath: string): Promise<void> {
   const settingsPath = join(projectRoot, ".claude", "settings.json");

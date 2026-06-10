@@ -13,6 +13,7 @@ export interface SessionStartEvent {
   ts: string;
 }
 
+// Written on UserPromptSubmit — structured file only
 export interface TurnStartEvent {
   event: "turn_start";
   session_id: string;
@@ -21,11 +22,11 @@ export interface TurnStartEvent {
   ts: string;
 }
 
-// Raw transcript objects for a completed turn — parsed at read time by mint show/log
+// Raw transcript objects — turn is present in structured file, absent in stream file
 export interface RawEvent {
   event: "raw";
   session_id: string;
-  turn: number;
+  turn?: number;
   lines: unknown[];
   ts: string;
 }
@@ -33,6 +34,5 @@ export interface RawEvent {
 export interface SessionEndEvent {
   event: "session_end";
   session_id: string;
-  total_turns: number;
   ts: string;
 }
