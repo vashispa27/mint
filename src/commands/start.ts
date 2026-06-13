@@ -86,6 +86,11 @@ export async function cmdStart(args: string[]): Promise<void> {
       node: process.env["HOSTNAME"] ?? "local",
     });
   }
+  publisher?.sessionStart({
+    harness: harness.name,
+    fsPath: projectRoot,
+    node: process.env["HOSTNAME"] ?? "local",
+  });
 
   // 6. Spawn the harness with inherited stdio — transcript watcher handles MQTT streaming.
   console.log(`  Starting ${harness.name}...\n`);
