@@ -1,18 +1,27 @@
+import type { ApiConfig } from "../api/client";
+
 interface Watcher {
   drain(): Promise<void>;
   stop(): void;
 }
 
+export interface LogPublisher {
+  log(t: "out" | "err", text: string): void;
+}
+
 export interface DaemonState {
   sessionId: string;
-  sessionFile: string;        // structured hook-based file
-  streamFile: string | null;  // raw watcher-based file (only in --stream mode)
+  sessionFile: string;
+  streamFile: string | null;
   projectRoot: string;
   harness: string;
   transcriptPath: string | null;
   turnStartOffset: number;
   currentTurn: number;
   watcher: Watcher | null;
+  api: ApiConfig | null;
+  node: string;
+  publisher: LogPublisher | null;
 }
 
 export function createState(opts: {
@@ -21,6 +30,9 @@ export function createState(opts: {
   streamFile: string | null;
   projectRoot: string;
   harness: string;
+  api: ApiConfig | null;
+  node: string;
+  publisher: LogPublisher | null;
 }): DaemonState {
   return {
     ...opts,

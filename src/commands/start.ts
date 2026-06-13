@@ -4,6 +4,9 @@ import { findProjectRoot, readProjectConfig } from "../cli/project";
 import { startDaemon } from "../daemon/server";
 import { createState } from "../daemon/state";
 import { HARNESSES } from "../harnesses/index";
+import { getApiConfig, notifySessionStart, notifySessionEnd } from "../api/client";
+import { getMqttConfig, connectMqtt } from "../mqtt/client";
+import { createPublisher, type Publisher } from "../mqtt/publisher";
 
 export async function cmdStart(args: string[]): Promise<void> {
   const stream = args.includes("--stream");
@@ -36,21 +39,56 @@ export async function cmdStart(args: string[]): Promise<void> {
   console.log(`✓ Mint project: ${projectRoot}`);
 
   // 2. Generate session ID + socket path
-  //TO:DO We've to check if hte session id has to be random or we add timestamp here.
   const sessionId = `ses_${randomId()}`;
   const socketPath = `/tmp/mint-${shortHash(projectRoot)}-${harness.name}.sock`;
 
-  // 3. Install harness-specific hooks
+  // 3. Connect to MQTT if configured
+  let publisher: Publisher | null = null;
+  const mqttConfig = getMqttConfig();
+  if (mqttConfig) {
+    try {
+      const client = await connectMqtt(mqttConfig);
+      publisher = createPublisher(client, mqttConfig.userId, sessionId);
+      console.log(`✓ MQTT connected (topic: users/${mqttConfig.userId}/${sessionId})`);
+    } catch (err) {
+      console.error(`  Warning: MQTT connection failed — continuing without streaming`);
+      console.error(`  ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // 4. Install harness-specific hooks
   await harness.installHooks(projectRoot, socketPath);
 
-  // 4. Build state and start daemon with harness-specific hook handler
+  // 5. Build state and start daemon
   const sessionsDir = join(projectRoot, ".mint", "sessions");
   const sessionFile = join(sessionsDir, `${sessionId}.jsonl`);
   const streamFile = stream ? join(sessionsDir, `${sessionId}.stream.jsonl`) : null;
-  const state = createState({ sessionId, sessionFile, streamFile, projectRoot, harness: harness.name });
+
+  const apiConfig = getApiConfig();
+  const state = createState({
+    sessionId,
+    sessionFile,
+    streamFile,
+    projectRoot,
+    harness: harness.name,
+    api: apiConfig,
+    node: process.env["HOSTNAME"] ?? "local",
+    publisher,
+  });
   const daemon = startDaemon(socketPath, state, harness.handleHook);
 
-  // 5. Spawn the harness
+  // Register the session in the backend immediately — before Claude starts.
+  if (apiConfig) {
+    await notifySessionStart(apiConfig, {
+      userId: apiConfig.userId,
+      sessionId,
+      harness: harness.name,
+      fsPath: projectRoot,
+      node: process.env["HOSTNAME"] ?? "local",
+    });
+  }
+
+  // 6. Spawn the harness with inherited stdio — transcript watcher handles MQTT streaming.
   console.log(`  Starting ${harness.name}...\n`);
   const proc = Bun.spawn([harness.command], {
     stdin: "inherit",
@@ -58,10 +96,21 @@ export async function cmdStart(args: string[]): Promise<void> {
     stderr: "inherit",
   });
 
-  await proc.exited;
+  const exitCode = await proc.exited;
   daemon.stop();
 
-  // 6. Print summary
+  publisher?.update(exitCode === 0 ? "completed" : "failed", exitCode);
+  await publisher?.disconnect();
+
+  if (apiConfig) {
+    await notifySessionEnd(apiConfig, {
+      userId: apiConfig.userId,
+      sessionId,
+      status: exitCode === 0 ? "completed" : "failed",
+      exitCode,
+    });
+  }
+
   console.log(`\n  Mint Session ended.`);
   console.log(`  Session ID: ${sessionId}`);
   if (stream) console.log(`  Stream file: ${sessionId}.stream.jsonl`);

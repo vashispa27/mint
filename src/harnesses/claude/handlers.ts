@@ -28,25 +28,34 @@ async function onSessionStart(payload: HookPayload, state: DaemonState): Promise
     ts: new Date().toISOString(),
   });
 
-  // Stream mode: start watcher writing raw lines to the stream file in real-time
-  if (state.streamFile) {
+  // Start the watcher whenever we have a stream file, a publisher, or both.
+  if (state.streamFile || state.publisher) {
     const streamFile = state.streamFile;
-    appendEvent(streamFile, {
-      event: "session_start",
-      session_id: state.sessionId,
-      harness: state.harness,
-      project: state.projectRoot,
-      model: (payload["model"] as string) ?? "unknown",
-      ts: new Date().toISOString(),
-    });
 
-    state.watcher = watchTranscript(transcriptPath, (lines) => {
+    if (streamFile) {
       appendEvent(streamFile, {
-        event: "raw",
+        event: "session_start",
         session_id: state.sessionId,
-        lines,
+        harness: state.harness,
+        project: state.projectRoot,
+        model: (payload["model"] as string) ?? "unknown",
         ts: new Date().toISOString(),
       });
+    }
+
+    state.watcher = watchTranscript(transcriptPath, (lines) => {
+      if (streamFile) {
+        appendEvent(streamFile, {
+          event: "raw",
+          session_id: state.sessionId,
+          lines,
+          ts: new Date().toISOString(),
+        });
+      }
+      // Publish each transcript line to MQTT as it arrives.
+      for (const line of lines) {
+        state.publisher?.log("out", typeof line === "string" ? line : JSON.stringify(line));
+      }
     });
   }
 }
@@ -87,16 +96,17 @@ async function onSessionEnd(_payload: HookPayload, state: DaemonState): Promise<
     ts: new Date().toISOString(),
   });
 
-  // Drain and close the stream watcher
-  if (state.streamFile) {
+  if (state.streamFile || state.publisher) {
     await state.watcher?.drain();
     state.watcher?.stop();
 
-    appendEvent(state.streamFile, {
-      event: "session_end",
-      session_id: state.sessionId,
-      ts: new Date().toISOString(),
-    });
+    if (state.streamFile) {
+      appendEvent(state.streamFile, {
+        event: "session_end",
+        session_id: state.sessionId,
+        ts: new Date().toISOString(),
+      });
+    }
   }
 }
 
