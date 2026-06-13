@@ -4,7 +4,7 @@ import { findProjectRoot, readProjectConfig } from "../cli/project";
 import { startDaemon } from "../daemon/server";
 import { createState } from "../daemon/state";
 import { HARNESSES } from "../harnesses/index";
-import { getApiConfig, notifySessionStart, notifySessionEnd } from "../api/client";
+import { getApiConfig, notifySessionStart, notifySessionEnd, uploadTranscript } from "../api/client";
 import { getMqttConfig, connectMqtt } from "../mqtt/client";
 import { createPublisher, type Publisher } from "../mqtt/publisher";
 
@@ -80,7 +80,6 @@ export async function cmdStart(args: string[]): Promise<void> {
   // Register the session in the backend immediately — before Claude starts.
   if (apiConfig) {
     await notifySessionStart(apiConfig, {
-      userId: apiConfig.userId,
       sessionId,
       harness: harness.name,
       fsPath: projectRoot,
@@ -103,8 +102,9 @@ export async function cmdStart(args: string[]): Promise<void> {
   await publisher?.disconnect();
 
   if (apiConfig) {
+    const content = await Bun.file(sessionFile).text();
+    await uploadTranscript(apiConfig, { sessionId, content });
     await notifySessionEnd(apiConfig, {
-      userId: apiConfig.userId,
       sessionId,
       status: exitCode === 0 ? "completed" : "failed",
       exitCode,

@@ -1,15 +1,20 @@
 export interface MqttConfig {
   endpoint: string;
-  token: string;
-  userId: string;
+  apiKey: string;
+  userId: string; // parsed from apiKey: sentinel_{8hex}_{userId}_{64hex}
 }
 
 export function getMqttConfig(): MqttConfig | null {
   const endpoint = process.env["SENTINEL_IOT_ENDPOINT"];
-  const token = process.env["SENTINEL_TOKEN"];
-  const userId = process.env["SENTINEL_USER_ID"];
-  if (!endpoint || !token || !userId) return null;
-  return { endpoint, token, userId };
+  const apiKey = process.env["SENTINEL_API_KEY"];
+  if (!endpoint || !apiKey) return null;
+  return { endpoint, apiKey, userId: parseUserId(apiKey) };
+}
+
+// sentinel_{8hex}_{userId}_{64hex} — fixed-length hex segments at both ends
+function parseUserId(apiKey: string): string {
+  const body = apiKey.slice("sentinel_".length); // "{8hex}_{userId}_{64hex}"
+  return body.slice(9, -(64 + 1));               // drop "8hex_" prefix and "_64hex" suffix
 }
 
 export interface MqttHandle {
@@ -20,8 +25,8 @@ export interface MqttHandle {
 export async function connectMqtt(config: MqttConfig): Promise<MqttHandle> {
   const url =
     `wss://${config.endpoint}/mqtt` +
-    `?token=${encodeURIComponent(config.token)}` +
-    `&x-amz-customauthorizer-name=sentinel-jwt-authorizer`;
+    `?x-amz-customauthorizer-name=sentinel-jwt-authorizer` +
+    `&token=${encodeURIComponent(config.apiKey)}`;
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url, ["mqtt"]);
